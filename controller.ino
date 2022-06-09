@@ -35,18 +35,18 @@ State state;
 #define LIFTOFF_THRESHOLD 1000 //if accleration is higher, rocket is lifted 
 #define POWER_THRESHOLD 500 //if acceleration is lower, engine burned out
 
-#define APOGEE_PARACHUTE_DELAY 1000 //number of miliseconds to release parachute after apogee
+#define APOGEE_PARACHUTE_DELAY 500 //number of miliseconds to release parachute after apogee
 #define LANDING_HEIGHT 60 //if the rocket is lower that thin height from the starting location, it landed
 
 #define IS_DEBUG true // if true, serial debgging is on
-#define CONSECUTIVE_COUNTER 1 //amount of consecutive height decreases to trigger parachute
+#define CONSECUTIVE_COUNTER 10 //amount of consecutive height decreases to trigger parachute
                               //SHOULD BE MORE THAN 1 IF NOT TESTING
-#define SRVO_PIN 9
+#define SRVO_PIN 5
 #define SRVO_OPEN 255
 #define SRVO_LOCKED 0
-#define BEEPER_PIN 7
-#define READY_PIN 8
-#define OVERRIDE_PIN 6
+#define BEEPER_PIN 6
+#define READY_PIN 17 //analog
+#define OVERRIDE_PIN 16 //analog
 
 
 State prev_state;
@@ -75,6 +75,7 @@ void setup() {
   pinMode(READY_PIN, INPUT);
   pinMode(OVERRIDE_PIN, INPUT);
 
+
 #if IS_DEBUG
   Serial.begin(9600);
 #endif
@@ -82,7 +83,7 @@ void setup() {
   state=IDLE;
 
   // connect sensors
-  if (!bme.begin()) {  
+  if (!bme.begin(0x76)) {  
 #if IS_DEBUG
     Serial.println("Could not find a valid bme280 sensor, check wiring!");
 #endif
@@ -116,13 +117,15 @@ void setup() {
   }
   Serial.println("x y z sqrMagnitude STATE");
 #endif
+  if( pulseIn(OVERRIDE_PIN,HIGH)<1200 && pulseIn(OVERRIDE_PIN,HIGH)>1000 ){
+    state = ERROR;
+  }
+  delay(2000);
 }
 
+sensors_event_t a, g, temp;
+ 
 void loop() {
-  // read sensors
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
 #if IS_DEBUG
     Serial.print(a.acceleration.x);
     Serial.print(" "); // a space ' ' or  tab '\t' character is printed between the two values.
@@ -138,7 +141,11 @@ void loop() {
 #endif
 
   // manual parachute override
-  if(state<4  && digitalRead(OVERRIDE_PIN)){
+  Serial.print(" "); // a space ' ' or  tab '\t' character is printed between the two values.
+  Serial.print(pulseIn(OVERRIDE_PIN,HIGH)); 
+  Serial.print(" "); // a space ' ' or  tab '\t' character is printed between the two values.
+  Serial.print(pulseIn(READY_PIN,HIGH)); 
+  if(state<4 && state>0 && pulseIn(OVERRIDE_PIN,HIGH)<1200 && pulseIn(OVERRIDE_PIN,HIGH)>1000 ){
     state = APOGEE;
     waitTime=0;
   }
@@ -147,11 +154,14 @@ void loop() {
   if(millis() > waitTime ){
   switch(state){
     case IDLE:  // rocket waits for signal
-      if(digitalRead(READY_PIN)){
+      if(pulseIn(READY_PIN,HIGH)>1600){
         state=READY;
       }
     break;
     case READY: // rocket is ready for launch and waits for acceleration
+       // read sensors
+       mpu.getEvent(&a, &g, &temp);
+
        if((a.acceleration.z*a.acceleration.z)>LIFTOFF_THRESHOLD){
           counter++;
           if(counter>CONSECUTIVE_COUNTER){
@@ -165,6 +175,9 @@ void loop() {
         }  
     break;
     case POWERED_ASCENT: // engine is on, waiting for accelearation to decrease
+      // read sensors
+      mpu.getEvent(&a, &g, &temp);
+
       if((a.acceleration.x*a.acceleration.x) + 
        (a.acceleration.y*a.acceleration.y) + 
        (a.acceleration.z*a.acceleration.z)<POWER_THRESHOLD){
@@ -181,7 +194,7 @@ void loop() {
     break;
     case MECO: // engine is off, altitude increases, waiting for altitude to start decreasing
         height = bme.readAltitude(SEALEVELPRESSURE_HPA);
-        if(height<prev_height){
+        if(height<=prev_height){
           counter++;
           if(counter>CONSECUTIVE_COUNTER){
             state=APOGEE;
@@ -192,6 +205,7 @@ void loop() {
         else{
           counter=0;
         }
+        prev_height=height;
     break;
     case APOGEE: // opening parachute
       lock_servo.write(SRVO_OPEN);
@@ -237,8 +251,4 @@ void beep(State curr_state){
         digitalWrite(LED_BUILTIN, LOW);
       }
     }
-#if IS_DEBUG
-    Serial.print(" ");
-    Serial.print(beep_timer);
-#endif
 }
